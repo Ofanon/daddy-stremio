@@ -1,0 +1,5 @@
+{
+  "REPLACE_WITH_CHANNEL_ID": [
+    { "name": "Source HLS", "url": "https://example.com/authorized-live-stream.m3u8" }
+  ]
+}

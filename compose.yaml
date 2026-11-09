@@ -1,0 +1,33 @@
+services:
+  resolver:
+    build:
+      context: https://github.com/Lunatic16/daddylive-stream-resolver.git#cf97fcd382a252f6557d7b85094477eba98e905b
+    environment:
+      PORT: "3000"
+      DLHD_BASE: ${DLHD_BASE:-https://thedaddy.li}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${RESOLVER_PORT:-3000}:3000"
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      start_period: 10s
+      retries: 5
+
+  addon:
+    build: .
+    environment:
+      HOST: 0.0.0.0
+      PORT: "7000"
+      RESOLVER_URL: http://resolver:3000
+      RESOLVER_PUBLIC_URL: ${RESOLVER_PUBLIC_URL:-http://127.0.0.1:3000}
+      RESOLVER_SERVERS: ${RESOLVER_SERVERS:-casting,player,cast,stream,watch}
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${ADDON_PORT:-7000}:7000"
+    depends_on:
+      resolver:
+        condition: service_healthy
+    restart: unless-stopped
+    init: true

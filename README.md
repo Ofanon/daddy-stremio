@@ -2,7 +2,33 @@
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 
-## Installation Windows
+## Installation Docker (Windows, Linux, macOS)
+
+Prérequis : Docker avec Compose et le moteur Linux démarré (Docker Desktop sur Windows/macOS). Depuis le dossier du dépôt :
+
+```sh
+docker compose up -d --build
+```
+
+Cela construit et démarre les deux services, sans installer Node.js ni télécharger le resolver manuellement. Le resolver est compilé depuis la même révision Git que le script Windows. Aucun fichier `.env` n’est obligatoire pour l’utilisation locale.
+
+Dans les extensions Stremio, ajouter `http://127.0.0.1:7000/manifest.json`. Le resolver est accessible à `http://127.0.0.1:3000`. L’addon attend que le resolver réponde avant de démarrer.
+
+Commandes utiles :
+
+```sh
+docker compose ps
+docker compose logs -f
+docker compose down
+```
+
+Les ports 7000 et 3000 doivent être libres : arrêter les anciens serveurs lancés dans les terminaux avant de démarrer Docker. Pour changer les ports, copier `.env.example` vers `.env`, puis modifier `ADDON_PORT` et/ou `RESOLVER_PORT`. Si le port du resolver change, adapter aussi `RESOLVER_PUBLIC_URL` (par exemple `http://127.0.0.1:3001`). Les liens des lecteurs continuent à utiliser cette adresse ; `http://resolver:3000` est uniquement l’adresse interne entre conteneurs.
+
+Pour une TV sur le réseau local, définir `BIND_ADDRESS=0.0.0.0` et `RESOLVER_PUBLIC_URL=http://IP_DU_PC:3000` dans `.env`. Installer alors `http://IP_DU_PC:7000/manifest.json`. Garder les services sur un réseau de confiance. Un accès depuis Internet nécessite HTTPS et un contrôle d’accès ; ne pas publier directement le proxy du resolver.
+
+Les contrôles de santé vérifient les serveurs locaux, pas la disponibilité des chaînes chez le fournisseur. La première construction exige un accès réseau à GitHub, npm et aux images Node. Aucune image n’est publiée dans un registre.
+
+## Installation Windows sans Docker
 Prérequis : Node.js 24 et Git. Dans PowerShell, ouvrir ce dossier et exécuter :
 
     powershell -ExecutionPolicy Bypass -File .\setup-resolver.ps1
@@ -38,6 +64,7 @@ Une résolution réussie ne garantit pas l’accès aux playlists/segments. Essa
 Le catalogue inclut les chaînes adultes du fournisseur. Aucun filtre parental implémenté.
 
 ## Validation du 9 novembre 2026
+- Docker : configuration Compose validée, deux images construites, deux conteneurs sains, manifeste et catalogue (100 résultats sur la première page) vérifiés depuis le conteneur addon.
 - Compilation du resolver réussie ; cinq tests automatisés de l’addon réussis (npm test).
 - Catalogue réel : 899 chaînes.
 - Parcours addon → resolver sur ESPN (44), serveur cast : une source, playlist HLS HTTP 200, première ressource média HTTP 200 avec signature MPEG-TS.

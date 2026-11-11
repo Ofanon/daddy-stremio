@@ -38,12 +38,14 @@ test('missing credentials produce an explicit failure without leaking a key', as
 });
 test('resolver mode skips unavailable playlists and sources that fail the video probe', async t => {
   const probes = [];
+  let failAll = false;
   const server = createAddon({ apiKey: '', resolverUrl: 'http://localhost:3000',
     resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch', 'player'],
     probeVideo: async url => {
       assert.equal(url.origin, 'http://localhost:3000');
       const player = url.searchParams.get('server');
       probes.push(player);
+      if (failAll && player === 'player') throw new Error('FFmpeg unavailable');
       return player !== 'casting';
     },
     fetchImpl: async url => {
@@ -64,6 +66,9 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   assert.equal(response.streams.length, 1);
   assert.equal(response.streams[0].url, 'https://video.example/api/live?channel=44&server=player');
   assert.equal(response.streams[0].externalUrl, undefined);
-  await fetch(root + '/stream/tv/daddy:44.json');
+  failAll = true;
+  const fallback = await (await fetch(root + '/stream/tv/daddy:44.json')).json();
+  assert.deepEqual(fallback.streams.map(s => s.name), ['DaddyLive · casting', 'DaddyLive · player']);
+  assert.ok(fallback.streams.every(s => s.description.includes('secours')));
   assert.deepEqual(probes.sort(), ['casting', 'casting', 'player', 'player']);
 });

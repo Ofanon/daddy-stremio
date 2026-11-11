@@ -1,4 +1,4 @@
-# DaddyLive pour Stremio — v0.2.3
+# DaddyLive pour Stremio — v0.2.4
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 
@@ -59,8 +59,8 @@ Pour téléphone/TV, les deux services doivent être accessibles depuis cet appa
 L’ancien mode API reste disponible en supprimant les variables RESOLVER_URL et RESOLVER_PUBLIC_URL, puis en configurant DADDY_API_KEY et streams.json.
 
 ## Fonctionnement
-Catalogue via /api/channels, cache de cinq minutes, pages de 100 chaînes. L’addon vérifie les playlists HLS via /api/live en parallèle, avec un délai de 20 secondes par source. Le resolver renouvelle les liens temporaires.
-À chaque demande de sources en mode resolver, l’addon tente ensuite de décoder 60 images avec FFmpeg. Il écarte les sources dont le test échoue ou dépasse 12 secondes. Si toutes échouent, aucune source n’est affichée. Docker inclut FFmpeg.
+Catalogue via /api/channels, cache de cinq minutes, pages de 100 chaînes. L’addon vérifie les playlists HLS via /api/live en parallèle. Le resolver renouvelle les liens temporaires.
+À chaque demande de sources en mode resolver, l’addon tente de décoder 60 images avec FFmpeg. La vérification des playlists et le décodage partagent un délai de 8 secondes. Si aucun décodage n’est validé, les playlists accessibles restent proposées comme sources de secours. Docker inclut FFmpeg.
 Ce test augmente le délai d’affichage des sources et consomme de la bande passante. Il porte sur un extrait et ne garantit pas la suite du flux ni sa compatibilité avec tous les lecteurs. Stremio conserve la source choisie pendant la lecture. Pour relancer le contrôle après un problème, rouvrir la liste des sources.
 Le catalogue inclut les chaînes adultes du fournisseur. Aucun filtre parental implémenté.
 

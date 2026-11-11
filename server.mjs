@@ -10,7 +10,7 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const sampleFrames = 60;
 
-async function checkVideo(url) {
+async function checkVideo(url, signal) {
   const { stdout, stderr } = await execFileAsync('ffmpeg', [
     '-nostdin', '-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1',
     '-protocol_whitelist', 'http,https,tcp,tls,crypto',
@@ -18,7 +18,7 @@ async function checkVideo(url) {
     '-allowed_extensions', 'ALL', '-extension_picky', '0',
     '-threads', '1', '-i', url.href, '-map', '0:v:0', '-an', '-sn', '-dn',
     '-frames:v', String(sampleFrames), '-threads', '1', '-f', 'null', '-'
-  ], { timeout: 12000, maxBuffer: 128 * 1024, windowsHide: true });
+  ], { signal, maxBuffer: 128 * 1024, windowsHide: true });
   const frames = [...stdout.matchAll(/^frame=(\d+)/gm)].at(-1);
   // A buffering-period SEI may reference an SPS before the first keyframe.
   // Keep checking frame count and reject every other decode error.
@@ -29,7 +29,7 @@ async function checkVideo(url) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.3', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.4', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -143,12 +143,12 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
       if (parts[0] === 'stream') {
         if (!channel) return send(200, { streams: [] });
         if (!resolverUrl) return send(200, { streams: nativeStreams(await streams(), id.slice(6)) });
+        const signal = AbortSignal.timeout(8000);
         const results = await Promise.allSettled(servers.map(async server => {
           const query = new URLSearchParams({ channel: id.slice(6), server });
           const route = `/api/live?${query}`;
-          const playlist = await fetchImpl(new URL(route, resolverUrl), {
-            signal: AbortSignal.timeout(20000), redirect: 'error'
-          });
+          const internalUrl = new URL(route, resolverUrl);
+          const playlist = await fetchImpl(internalUrl, { signal, redirect: 'error' });
           if (!playlist.ok || !/mpegurl/i.test(playlist.headers.get('content-type') || '')) {
             await playlist.body?.cancel();
             throw new Error('Playlist HLS inaccessible');
@@ -157,13 +157,21 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
           if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
             throw new Error('Playlist HLS vide ou invalide');
           }
-          if (!await probeVideo(new URL(route, resolverUrl))) throw new Error('Échantillon vidéo illisible');
-          const live = new URL(route, resolverPublicUrl).href;
-          return { name: `DaddyLive · ${server}`, url: live,
-            behaviorHints: { notWebReady: true } };
+          let verified = false;
+          try {
+            verified = await probeVideo(internalUrl, signal);
+          } catch {
+            // A timeout or an unavailable decoder must not hide a valid playlist.
+          }
+          return { verified, stream: { name: `DaddyLive · ${server}`,
+            url: new URL(route, resolverPublicUrl).href, behaviorHints: { notWebReady: true } } };
         }));
         const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-        return send(200, { streams: resolved });
+        const verified = resolved.filter(source => source.verified);
+        const availableStreams = verified.length
+          ? verified.map(source => source.stream)
+          : resolved.map(({ stream }) => ({ ...stream, description: 'Source de secours · décodage non validé' }));
+        return send(200, { streams: availableStreams });
       }
       return send(404, { error: 'Ressource inconnue' });
     } catch {

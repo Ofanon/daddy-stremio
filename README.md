@@ -1,4 +1,4 @@
-# DaddyLive pour Stremio — v0.2.2
+# DaddyLive pour Stremio — v0.2.3
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 

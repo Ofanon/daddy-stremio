@@ -20,11 +20,16 @@ async function checkVideo(url) {
     '-frames:v', String(sampleFrames), '-threads', '1', '-f', 'null', '-'
   ], { timeout: 12000, maxBuffer: 128 * 1024, windowsHide: true });
   const frames = [...stdout.matchAll(/^frame=(\d+)/gm)].at(-1);
-  return stderr.trim() === '' && Number(frames?.[1]) >= sampleFrames;
+  // A buffering-period SEI may reference an SPS before the first keyframe.
+  // Keep checking frame count and reject every other decode error.
+  const decodeErrors = stderr.split(/\r?\n/).filter(line =>
+    line.trim() && !/^\[[^\]]+\] non-existing SPS \d+ referenced in buffering period$/.test(line.trim())
+  );
+  return decodeErrors.length === 0 && Number(frames?.[1]) >= sampleFrames;
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.2', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.3', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',

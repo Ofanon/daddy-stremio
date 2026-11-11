@@ -29,7 +29,7 @@ async function checkVideo(url, signal) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.4', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.5', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -153,6 +153,11 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
             await playlist.body?.cancel();
             throw new Error('Playlist HLS inaccessible');
           }
+          const actualPlayer = playlist.headers.get('x-daddylive-player');
+          if (actualPlayer && actualPlayer !== server) {
+            await playlist.body?.cancel();
+            throw new Error('Le resolver a servi un autre lecteur');
+          }
           const lines = (await playlist.text()).trimStart();
           if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
             throw new Error('Playlist HLS vide ou invalide');
@@ -163,7 +168,8 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
           } catch {
             // A timeout or an unavailable decoder must not hide a valid playlist.
           }
-          return { verified, stream: { name: `DaddyLive · ${server}`,
+          const name = actualPlayer ? `DaddyLive · ${actualPlayer}` : `DaddyLive · ${server} (demandé)`;
+          return { verified, stream: { name,
             url: new URL(route, resolverPublicUrl).href, behaviorHints: { notWebReady: true } } };
         }));
         const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);

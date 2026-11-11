@@ -40,7 +40,7 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   const probes = [];
   let failAll = false;
   const server = createAddon({ apiKey: '', resolverUrl: 'http://localhost:3000',
-    resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch', 'player'],
+    resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch', 'player', 'stream'],
     probeVideo: async url => {
       assert.equal(url.origin, 'http://localhost:3000');
       const player = url.searchParams.get('server');
@@ -55,7 +55,11 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
       const body = url.searchParams.get('server') === 'watch'
         ? '#EXTM3U\n#EXT-X-TARGETDURATION:4\n'
         : '#EXTM3U\n#EXTINF:4,\nsegment.ts\n';
-      return new Response(body, { headers: { 'Content-Type': 'application/x-mpegURL' } });
+      const requested = url.searchParams.get('server');
+      return new Response(body, { headers: {
+        'Content-Type': 'application/x-mpegURL',
+        'X-DaddyLive-Player': requested === 'stream' ? 'cast' : requested
+      } });
     } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));

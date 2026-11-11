@@ -2,3 +2,5 @@
 !Dockerfile
 !package.json
 !server.mjs
+!Dockerfile.resolver
+!configure-resolver.mjs

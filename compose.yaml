@@ -1,7 +1,10 @@
 services:
   resolver:
     build:
-      context: https://github.com/Lunatic16/daddylive-stream-resolver.git#cf97fcd382a252f6557d7b85094477eba98e905b
+      context: .
+      dockerfile: Dockerfile.resolver
+      additional_contexts:
+        resolver_source: https://github.com/Lunatic16/daddylive-stream-resolver.git#3dae180050434c9f4119e85f0271aab52193bd97
     environment:
       PORT: "3000"
       DLHD_BASE: ${DLHD_BASE:-https://thedaddy.li}

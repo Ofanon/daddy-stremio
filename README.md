@@ -1,4 +1,4 @@
-# DaddyLive pour Stremio — v0.2.5
+# DaddyLive pour Stremio — v0.2.6
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 
@@ -50,6 +50,7 @@ Dans .env :
 - RESOLVER_URL : adresse depuis l’addon, http://127.0.0.1:3000 par défaut.
 - RESOLVER_PUBLIC_URL : adresse accessible au lecteur Stremio, identique sur ce PC.
 - RESOLVER_SERVERS : casting,player,cast,stream,watch. Plus est exclu car signalé indisponible.
+- EXCLUDED_CHANNEL_IDS : chaînes masquées dans le catalogue et la recherche, séparées par des virgules. France 2 (950) est exclue par défaut après des essais de lecture infructueux. Définir `EXCLUDED_CHANNEL_IDS=` dans `.env` pour réafficher toutes les chaînes.
 - PORT et HOST : 7000 et 127.0.0.1 par défaut.
 
 DLHD_BASE configure le domaine du fournisseur dans le resolver. start-resolver.ps1 utilise https://thedaddy.li sauf si cette variable est déjà définie.

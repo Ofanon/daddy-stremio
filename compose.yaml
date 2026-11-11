@@ -27,6 +27,7 @@ services:
       RESOLVER_URL: http://resolver:3000
       RESOLVER_PUBLIC_URL: ${RESOLVER_PUBLIC_URL:-http://127.0.0.1:3000}
       RESOLVER_SERVERS: ${RESOLVER_SERVERS:-casting,player,cast,stream,watch}
+      EXCLUDED_CHANNEL_IDS: ${EXCLUDED_CHANNEL_IDS-950}
     ports:
       - "${BIND_ADDRESS:-127.0.0.1}:${ADDON_PORT:-7000}:7000"
     depends_on:

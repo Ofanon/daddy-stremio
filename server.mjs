@@ -29,7 +29,7 @@ async function checkVideo(url, signal) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.5', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.6', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -73,7 +73,10 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
   resolverUrl = process.env.RESOLVER_URL,
   resolverPublicUrl = process.env.RESOLVER_PUBLIC_URL || resolverUrl,
   servers = (process.env.RESOLVER_SERVERS || 'casting,player,cast,stream,watch').split(','),
+  excludedChannelIds = process.env.EXCLUDED_CHANNEL_IDS ?? '950',
   cacheMs = 300000 } = {}) {
+  const excluded = new Set(excludedChannelIds.split(',').map(id => id.trim()).filter(Boolean)
+    .map(id => `daddy:${id}`));
   if (resolverUrl && (!webUrl(resolverUrl) || !webUrl(resolverPublicUrl))) throw new Error('Adresse resolver invalide');
   const allowedServers = new Set(['stream', 'cast', 'watch', 'casting', 'player']);
   servers = [...new Set(servers.map(s => s.trim()).filter(s => allowedServers.has(s)))];
@@ -92,7 +95,8 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
       if (resolverUrl) {
         const rows = await resolverRequest('/api/channels');
         if (!Array.isArray(rows) || rows.length === 0) throw new Error('Catalogue resolver vide');
-        cached = normalizeChannels(rows.map(row => ({ channel_id: row.id, channel_name: row.name })));
+        cached = normalizeChannels(rows.map(row => ({ channel_id: row.id, channel_name: row.name })))
+          .filter(channel => !excluded.has(channel.id));
         expires = Date.now() + cacheMs;
         return cached;
       }
@@ -100,7 +104,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
       url.search = new URLSearchParams({ key: apiKey, endpoint: 'channels' }).toString();
       const response = await fetchImpl(url, { signal: AbortSignal.timeout(15000), redirect: 'error' });
       if (!response.ok) throw new Error('API indisponible');
-      cached = normalizeChannels(await response.json());
+      cached = normalizeChannels(await response.json()).filter(channel => !excluded.has(channel.id));
       expires = Date.now() + cacheMs;
       return cached;
     })().finally(() => { pending = undefined; });

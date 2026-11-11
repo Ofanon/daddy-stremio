@@ -9,6 +9,7 @@ const base = 'https://thedaddy.li/';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const sampleFrames = 60;
+const brokenChannelTtlMs = 10 * 60 * 1000;
 
 async function checkVideo(url, signal) {
   const { stdout, stderr } = await execFileAsync('ffmpeg', [
@@ -25,11 +26,13 @@ async function checkVideo(url, signal) {
   const decodeErrors = stderr.split(/\r?\n/).filter(line =>
     line.trim() && !/^\[[^\]]+\] non-existing SPS \d+ referenced in buffering period$/.test(line.trim())
   );
-  return decodeErrors.length === 0 && Number(frames?.[1]) >= sampleFrames;
+  if (decodeErrors.some(line => /^\[(?:dec:[^\s\]]+|h264|hevc|mpeg2video|vp[89]|av1) @/.test(line))) return false;
+  if (decodeErrors.length === 0 && Number(frames?.[1]) >= sampleFrames) return true;
+  return null;
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.6', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.7', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -77,6 +80,14 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
   cacheMs = 300000 } = {}) {
   const excluded = new Set(excludedChannelIds.split(',').map(id => id.trim()).filter(Boolean)
     .map(id => `daddy:${id}`));
+  const hiddenUntil = new Map();
+  function isTemporarilyHidden(id) {
+    const expiry = hiddenUntil.get(id);
+    if (expiry === undefined) return false;
+    if (expiry > Date.now()) return true;
+    hiddenUntil.delete(id);
+    return false;
+  }
   if (resolverUrl && (!webUrl(resolverUrl) || !webUrl(resolverPublicUrl))) throw new Error('Adresse resolver invalide');
   const allowedServers = new Set(['stream', 'cast', 'watch', 'casting', 'player']);
   servers = [...new Set(servers.map(s => s.trim()).filter(s => allowedServers.has(s)))];
@@ -137,7 +148,10 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
         const search = (extra.get('search') || '').toLocaleLowerCase();
         const rawSkip = Number(extra.get('skip') || 0);
         const skip = Number.isSafeInteger(rawSkip) && rawSkip >= 0 ? rawSkip : 0;
-        return send(200, { metas: (await channels()).filter(c => c.name.toLocaleLowerCase().includes(search)).slice(skip, skip + 100) });
+        const metas = (await channels())
+          .filter(c => !isTemporarilyHidden(c.id) && c.name.toLocaleLowerCase().includes(search))
+          .slice(skip, skip + 100);
+        return send(200, { metas });
       }
       if (parts.length !== 3 || !parts[2].endsWith('.json')) return send(404, { error: 'Ressource inconnue' });
       const id = parts[2].slice(0, -5);
@@ -166,7 +180,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
           if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
             throw new Error('Playlist HLS vide ou invalide');
           }
-          let verified = false;
+          let verified = null;
           try {
             verified = await probeVideo(internalUrl, signal);
           } catch {
@@ -177,10 +191,15 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
             url: new URL(route, resolverPublicUrl).href, behaviorHints: { notWebReady: true } } };
         }));
         const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-        const verified = resolved.filter(source => source.verified);
+        const verified = resolved.filter(source => source.verified === true);
+        const unknown = resolved.filter(source => source.verified == null);
+        if (verified.length) hiddenUntil.delete(id);
+        else if (!signal.aborted && resolved.length && resolved.every(source => source.verified === false)) {
+          hiddenUntil.set(id, Date.now() + brokenChannelTtlMs);
+        }
         const availableStreams = verified.length
           ? verified.map(source => source.stream)
-          : resolved.map(({ stream }) => ({ ...stream, description: 'Source de secours · décodage non validé' }));
+          : unknown.map(({ stream }) => ({ ...stream, description: 'Source de secours · décodage non validé' }));
         return send(200, { streams: availableStreams });
       }
       return send(404, { error: 'Ressource inconnue' });

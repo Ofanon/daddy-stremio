@@ -1,4 +1,4 @@
-# DaddyLive pour Stremio — v0.2.1
+# DaddyLive pour Stremio — v0.2.2
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 
@@ -29,7 +29,7 @@ Pour une TV sur le réseau local, définir `BIND_ADDRESS=0.0.0.0` et `RESOLVER_P
 Les contrôles de santé vérifient les serveurs locaux, pas la disponibilité des chaînes chez le fournisseur. La première construction exige un accès réseau à GitHub, npm et aux images Node. Aucune image n’est publiée dans un registre.
 
 ## Installation Windows sans Docker
-Prérequis : Node.js 24 et Git. Dans PowerShell, ouvrir ce dossier et exécuter :
+Prérequis : Node.js 24, Git et une version récente de FFmpeg accessible par la commande `ffmpeg` (avec l’option HLS `extension_picky`). Dans PowerShell, ouvrir ce dossier et exécuter :
 
     powershell -ExecutionPolicy Bypass -File .\setup-resolver.ps1
     Copy-Item .env.example .env
@@ -60,7 +60,8 @@ L’ancien mode API reste disponible en supprimant les variables RESOLVER_URL et
 
 ## Fonctionnement
 Catalogue via /api/channels, cache de cinq minutes, pages de 100 chaînes. L’addon vérifie les playlists HLS via /api/live en parallèle, avec un délai de 20 secondes par source. Le resolver renouvelle les liens temporaires.
-Les playlists indisponibles ou vides sont masquées. Une playlist valide peut contenir des segments endommagés ou utiliser un codec incompatible avec ton lecteur. Essayer une autre source en cas de problème. Le WebM et le programme des événements ne sont pas pris en charge.
+À chaque demande de sources en mode resolver, l’addon tente ensuite de décoder 60 images avec FFmpeg. Il écarte les sources dont le test échoue ou dépasse 12 secondes. Si toutes échouent, aucune source n’est affichée. Docker inclut FFmpeg.
+Ce test augmente le délai d’affichage des sources et consomme de la bande passante. Il porte sur un extrait et ne garantit pas la suite du flux ni sa compatibilité avec tous les lecteurs. Stremio conserve la source choisie pendant la lecture. Pour relancer le contrôle après un problème, rouvrir la liste des sources.
 Le catalogue inclut les chaînes adultes du fournisseur. Aucun filtre parental implémenté.
 
 ## Validation du 9 novembre 2026

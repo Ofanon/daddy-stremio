@@ -1,12 +1,30 @@
 import http from 'node:http';
+import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { promisify } from 'node:util';
 
 const base = 'https://thedaddy.li/';
 const directory = path.dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
+const sampleFrames = 60;
+
+async function checkVideo(url) {
+  const { stdout, stderr } = await execFileAsync('ffmpeg', [
+    '-nostdin', '-hide_banner', '-loglevel', 'error', '-nostats', '-progress', 'pipe:1',
+    '-protocol_whitelist', 'http,https,tcp,tls,crypto',
+    '-rw_timeout', '4000000', '-f', 'hls',
+    '-allowed_extensions', 'ALL', '-extension_picky', '0',
+    '-threads', '1', '-i', url.href, '-map', '0:v:0', '-an', '-sn', '-dn',
+    '-frames:v', String(sampleFrames), '-threads', '1', '-f', 'null', '-'
+  ], { timeout: 12000, maxBuffer: 128 * 1024, windowsHide: true });
+  const frames = [...stdout.matchAll(/^frame=(\d+)/gm)].at(-1);
+  return stderr.trim() === '' && Number(frames?.[1]) >= sampleFrames;
+}
+
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.1', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.2', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -46,6 +64,7 @@ export function nativeStreams(mapping, channelId) {
   });
 }
 export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fetch, readStreams,
+  probeVideo = checkVideo,
   resolverUrl = process.env.RESOLVER_URL,
   resolverPublicUrl = process.env.RESOLVER_PUBLIC_URL || resolverUrl,
   servers = (process.env.RESOLVER_SERVERS || 'casting,player,cast,stream,watch').split(','),
@@ -133,6 +152,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
           if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
             throw new Error('Playlist HLS vide ou invalide');
           }
+          if (!await probeVideo(new URL(route, resolverUrl))) throw new Error('Échantillon vidéo illisible');
           const live = new URL(route, resolverPublicUrl).href;
           return { name: `DaddyLive · ${server}`, url: live,
             behaviorHints: { notWebReady: true } };

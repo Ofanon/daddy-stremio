@@ -36,9 +36,16 @@ test('missing credentials produce an explicit failure without leaking a key', as
   const response = await fetch(`http://127.0.0.1:${server.address().port}/catalog/tv/daddy-channels.json`);
   assert.equal(response.status, 503);
 });
-test('resolver mode keeps valid HLS playlists and skips failed or empty sources', async t => {
+test('resolver mode skips unavailable playlists and sources that fail the video probe', async t => {
+  const probes = [];
   const server = createAddon({ apiKey: '', resolverUrl: 'http://localhost:3000',
-    resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch'],
+    resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch', 'player'],
+    probeVideo: async url => {
+      assert.equal(url.origin, 'http://localhost:3000');
+      const player = url.searchParams.get('server');
+      probes.push(player);
+      return player !== 'casting';
+    },
     fetchImpl: async url => {
       if (url.pathname === '/api/channels') return { ok: true, json: async () => [{ id: 44, name: 'ESPN' }] };
       assert.equal(url.pathname, '/api/live');
@@ -55,6 +62,8 @@ test('resolver mode keeps valid HLS playlists and skips failed or empty sources'
   assert.equal(catalog.metas[0].name, 'ESPN');
   const response = await (await fetch(root + '/stream/tv/daddy:44.json')).json();
   assert.equal(response.streams.length, 1);
-  assert.equal(response.streams[0].url, 'https://video.example/api/live?channel=44&server=casting');
+  assert.equal(response.streams[0].url, 'https://video.example/api/live?channel=44&server=player');
   assert.equal(response.streams[0].externalUrl, undefined);
+  await fetch(root + '/stream/tv/daddy:44.json');
+  assert.deepEqual(probes.sort(), ['casting', 'casting', 'player', 'player']);
 });

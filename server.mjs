@@ -6,7 +6,7 @@ import path from 'node:path';
 const base = 'https://thedaddy.li/';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.0', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.1', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -121,16 +121,23 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
         if (!resolverUrl) return send(200, { streams: nativeStreams(await streams(), id.slice(6)) });
         const results = await Promise.allSettled(servers.map(async server => {
           const query = new URLSearchParams({ channel: id.slice(6), server });
-          const result = await resolverRequest(`/api/resolve?${query}`);
-          if (result.isHls !== true || !webUrl(result.live)) throw new Error('Flux HLS absent');
-          // Construct a stable endpoint on the configured public origin. Do not
-          // return an upstream signed URL or trust a returned third-party host.
-          const live = new URL(`/api/live?${query}`, resolverPublicUrl).href;
+          const route = `/api/live?${query}`;
+          const playlist = await fetchImpl(new URL(route, resolverUrl), {
+            signal: AbortSignal.timeout(20000), redirect: 'error'
+          });
+          if (!playlist.ok || !/mpegurl/i.test(playlist.headers.get('content-type') || '')) {
+            await playlist.body?.cancel();
+            throw new Error('Playlist HLS inaccessible');
+          }
+          const lines = (await playlist.text()).trimStart();
+          if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
+            throw new Error('Playlist HLS vide ou invalide');
+          }
+          const live = new URL(route, resolverPublicUrl).href;
           return { name: `DaddyLive · ${server}`, url: live,
             behaviorHints: { notWebReady: true } };
         }));
         const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-        if (!resolved.length) return send(503, { streams: [], error: 'Aucun serveur vidéo disponible pour cette chaîne.' });
         return send(200, { streams: resolved });
       }
       return send(404, { error: 'Ressource inconnue' });

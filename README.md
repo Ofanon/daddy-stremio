@@ -1,4 +1,4 @@
-# DaddyLive pour Stremio — v0.2
+# DaddyLive pour Stremio — v0.2.1
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 
@@ -59,8 +59,8 @@ Pour téléphone/TV, les deux services doivent être accessibles depuis cet appa
 L’ancien mode API reste disponible en supprimant les variables RESOLVER_URL et RESOLVER_PUBLIC_URL, puis en configurant DADDY_API_KEY et streams.json.
 
 ## Fonctionnement
-Catalogue via /api/channels, cache de cinq minutes, pages de 100 chaînes. Résolution parallèle via /api/resolve avec délai de 20 secondes. Sources HLS via /api/live pour laisser le resolver renouveler les liens temporaires.
-Une résolution réussie ne garantit pas l’accès aux playlists/segments. Essayer une autre source en cas d’échec. WebM exclu ; pas de programme des événements.
+Catalogue via /api/channels, cache de cinq minutes, pages de 100 chaînes. L’addon vérifie les playlists HLS via /api/live en parallèle, avec un délai de 20 secondes par source. Le resolver renouvelle les liens temporaires.
+Les playlists indisponibles ou vides sont masquées. Une playlist valide peut contenir des segments endommagés ou utiliser un codec incompatible avec ton lecteur. Essayer une autre source en cas de problème. Le WebM et le programme des événements ne sont pas pris en charge.
 Le catalogue inclut les chaînes adultes du fournisseur. Aucun filtre parental implémenté.
 
 ## Validation du 9 novembre 2026

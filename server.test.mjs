@@ -36,13 +36,17 @@ test('missing credentials produce an explicit failure without leaking a key', as
   const response = await fetch(`http://127.0.0.1:${server.address().port}/catalog/tv/daddy-channels.json`);
   assert.equal(response.status, 503);
 });
-test('resolver mode needs no API key and retains working servers when another fails', async t => {
+test('resolver mode keeps valid HLS playlists and skips failed or empty sources', async t => {
   const server = createAddon({ apiKey: '', resolverUrl: 'http://localhost:3000',
-    resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast'],
+    resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch'],
     fetchImpl: async url => {
       if (url.pathname === '/api/channels') return { ok: true, json: async () => [{ id: 44, name: 'ESPN' }] };
-      if (url.searchParams.get('server') === 'cast') return { ok: false };
-      return { ok: true, json: async () => ({ isHls: true, live: 'http://internal-host/api/live' }) };
+      assert.equal(url.pathname, '/api/live');
+      if (url.searchParams.get('server') === 'cast') return new Response('Forbidden', { status: 403 });
+      const body = url.searchParams.get('server') === 'watch'
+        ? '#EXTM3U\n#EXT-X-TARGETDURATION:4\n'
+        : '#EXTM3U\n#EXTINF:4,\nsegment.ts\n';
+      return new Response(body, { headers: { 'Content-Type': 'application/x-mpegURL' } });
     } });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));

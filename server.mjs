@@ -11,6 +11,27 @@ const directory = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const sampleFrames = 180;
 const verificationTtlMs = 6 * 60 * 60 * 1000;
+const adultChannel = /(?:18\s*\+|\+\s*18|\b(?:adult(?:e|es|s)?|xxx|porn\w*|playboy|hustler|brazzers|babes tv|private tv|vixen|dorcel|redlight|penthouse|sct|venus adult)\b)/i;
+const countryRules = [
+  ['Belgique', /\b(?:belg(?:ium|ique)|rtbf|tipik|la une)\b/i],
+  ['Suisse', /\b(?:switzerland|suisse|rts [12]|srf)\b/i],
+  ['Canada', /\b(?:ca|canada|québec|quebec|tsn\d*|rds\d*)\b/i],
+  ['Australie', /\b(?:australia|australie)\b|\bAU$/i],
+  ['Suisse', /\bch$/i],
+  ['Royaume-Uni', /\b(?:uk|united kingdom|bbc|itv\d*)\b/i],
+  ['Pologne', /\b(?:pl|poland|polska)\b/i],
+  ['Allemagne', /\b(?:de|germany|deutschland)\b$/i],
+  ['Italie', /\b(?:it|italy|italia)\b/i],
+  ['Espagne', /\b(?:es|spain|españa|movistar)\b/i],
+  ['Portugal', /\b(?:pt|portugal)\b/i],
+  ['États-Unis', /\b(?:usa|us|united states|espn\d*|nbc|abc|cbs)\b/i],
+  ['France', /\b(?:france|fr|tf1|tfx|tfou|m6|w9|gulli|lci|bfm(?:tv)?|cnews|cstar|rmc|6ter|tmc|tf1 séries films|arte)\b|canal\s*\+/i]
+];
+const countries = ['France', ...new Set(countryRules.map(([country]) => country).filter(country => country !== 'France')), 'Autres'];
+
+function channelCountry(name) {
+  return countryRules.find(([, pattern]) => pattern.test(name))?.[0] ?? 'Autres';
+}
 
 async function checkVideo(url, signal) {
   const { stdout, stderr } = await execFileAsync('ffmpeg', [
@@ -33,11 +54,12 @@ async function checkVideo(url, signal) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.9', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.10', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
-    extra: [{ name: 'search', isRequired: false }, { name: 'skip', isRequired: false }] }]
+    extra: [{ name: 'genre', options: countries, optionsLimit: 1, isRequired: false },
+      { name: 'search', isRequired: false }, { name: 'skip', isRequired: false }] }]
 };
 function webUrl(value) {
   try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; }
@@ -50,12 +72,14 @@ export function normalizeChannels(payload) {
   const seen = new Set();
   return rows.flatMap(row => {
     if (!row || row.channel_id == null || !row.channel_name) return [];
+    const name = String(row.channel_name).trim();
+    if (!name || adultChannel.test(name)) return [];
     const id = String(row.channel_id);
     if (!/^[a-zA-Z0-9_-]+$/.test(id) || seen.has(id)) return [];
     seen.add(id);
     let poster;
     try { poster = row.logo_url ? webUrl(new URL(row.logo_url, base).href) : undefined; } catch {}
-    return [{ id: `daddy:${id}`, type: 'tv', name: String(row.channel_name),
+    return [{ id: `daddy:${id}`, type: 'tv', name, genres: [channelCountry(name)],
       ...(poster ? { poster, posterShape: 'square' } : {}),
       description: 'Télévision en direct — DaddyLive' }];
   });
@@ -141,7 +165,8 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
   async function scanChannels() {
     while (!scanner.signal.aborted) {
       const rows = await channels().catch(() => null);
-      for (const channel of rows ?? []) {
+      const scanOrder = [...(rows ?? [])].sort((a, b) => Number(b.genres[0] === 'France') - Number(a.genres[0] === 'France'));
+      for (const channel of scanOrder) {
         if (scanner.signal.aborted) return;
         await verifyChannel(channel.id);
         await delay(1500, undefined, { signal: scanner.signal });
@@ -169,11 +194,13 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
       if (parts[0] === 'catalog' && ['daddy-channels', 'daddy-channels.json'].includes(parts[2]) && parts.length <= 4) {
         const extra = new URLSearchParams((parts[3] || '').replace(/\.json$/, ''));
         const search = (extra.get('search') || '').toLocaleLowerCase();
+        const country = extra.get('genre');
         const rawSkip = Number(extra.get('skip') || 0);
         const skip = Number.isSafeInteger(rawSkip) && rawSkip >= 0 ? rawSkip : 0;
         const rows = await channels();
         const metas = rows
           .filter(c => (!resolverUrl || isCatalogVerified(c.id)) && c.name.toLocaleLowerCase().includes(search))
+          .filter(c => !country || c.genres.includes(country))
           .slice(skip, skip + 100);
         return send(200, { metas });
       }

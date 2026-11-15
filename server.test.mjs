@@ -2,7 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createAddon, nativeStreams, normalizeChannels } from './server.mjs';
 
-const payload = { success: true, data: [{ channel_id: '491', channel_name: 'beIN SPORTS Australia 1', logo_url: 'logos/bein.png' }] };
+const payload = { success: true, data: [
+  { channel_id: '491', channel_name: 'beIN SPORTS Australia 1', logo_url: 'logos/bein.png' },
+  { channel_id: '51', channel_name: 'TF1' },
+  { channel_id: '999', channel_name: '[18+] Adult' }
+] };
 test('normalizes the documented API envelope and relative logos', () => {
   assert.equal(normalizeChannels(payload)[0].poster, 'https://thedaddy.li/logos/bein.png');
   assert.throws(() => normalizeChannels({ success: false }));
@@ -24,6 +28,9 @@ test('serves manifest, filtered catalog, metadata and native streams over HTTP',
   assert.equal((await get('/manifest.json')).types[0], 'tv');
   assert.equal((await get('/catalog/tv/daddy-channels/search=bein.json')).metas.length, 1);
   assert.equal((await get('/catalog/tv/daddy-channels/search=absent.json')).metas.length, 0);
+  const french = await get('/catalog/tv/daddy-channels/genre=France&search=tf.json');
+  assert.deepEqual(french.metas.map(channel => channel.name), ['TF1']);
+  assert.deepEqual((await get('/catalog/tv/daddy-channels/search=adult.json')).metas, []);
   assert.equal((await get('/meta/tv/daddy%3A491.json')).meta.id, 'daddy:491');
   assert.equal((await get('/stream/tv/daddy%3A491.json')).streams[0].url, 'https://example.com/live.m3u8');
   assert.deepEqual((await get('/stream/tv/daddy%3A999.json')).streams, []);

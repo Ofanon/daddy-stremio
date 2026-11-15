@@ -40,6 +40,7 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   const probes = [];
   let probeMode = 'normal';
   const server = createAddon({ apiKey: '', resolverUrl: 'http://localhost:3000',
+    allowUnverifiedStreams: false,
     resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch', 'player', 'stream'],
     probeVideo: async url => {
       assert.equal(url.origin, 'http://localhost:3000');
@@ -79,8 +80,7 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   assert.equal(response.streams[0].externalUrl, undefined);
   probeMode = 'unknown';
   const fallback = await (await fetch(root + '/stream/tv/daddy:44.json')).json();
-  assert.deepEqual(fallback.streams.map(s => s.name), ['DaddyLive · player']);
-  assert.ok(fallback.streams.every(s => s.description.includes('secours')));
+  assert.deepEqual(fallback.streams, []);
   assert.deepEqual(probes.sort(), ['casting', 'casting', 'player', 'player']);
   const readCatalog = async () => (await (await fetch(root + '/catalog/tv/daddy-channels.json')).json()).metas;
   assert.equal((await readCatalog()).length, 1);

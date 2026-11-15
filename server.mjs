@@ -32,7 +32,7 @@ async function checkVideo(url, signal) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.7', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.8', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -77,6 +77,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
   resolverPublicUrl = process.env.RESOLVER_PUBLIC_URL || resolverUrl,
   servers = (process.env.RESOLVER_SERVERS || 'casting,player,cast,stream,watch').split(','),
   excludedChannelIds = process.env.EXCLUDED_CHANNEL_IDS ?? '950',
+  allowUnverifiedStreams = process.env.ALLOW_UNVERIFIED_STREAMS === 'true',
   cacheMs = 300000 } = {}) {
   const excluded = new Set(excludedChannelIds.split(',').map(id => id.trim()).filter(Boolean)
     .map(id => `daddy:${id}`));
@@ -184,7 +185,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
           try {
             verified = await probeVideo(internalUrl, signal);
           } catch {
-            // A timeout or an unavailable decoder must not hide a valid playlist.
+            // Keep inconclusive checks distinct from confirmed decode errors.
           }
           const name = actualPlayer ? `DaddyLive · ${actualPlayer}` : `DaddyLive · ${server} (demandé)`;
           return { verified, stream: { name,
@@ -192,14 +193,18 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
         }));
         const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
         const verified = resolved.filter(source => source.verified === true);
-        const unknown = resolved.filter(source => source.verified == null);
         if (verified.length) hiddenUntil.delete(id);
         else if (!signal.aborted && resolved.length && resolved.every(source => source.verified === false)) {
           hiddenUntil.set(id, Date.now() + brokenChannelTtlMs);
         }
-        const availableStreams = verified.length
-          ? verified.map(source => source.stream)
-          : unknown.map(({ stream }) => ({ ...stream, description: 'Source de secours · décodage non validé' }));
+        const availableStreams = verified.map(source => source.stream);
+        if (allowUnverifiedStreams && availableStreams.length === 0) {
+          for (const { verified: result, stream } of resolved) {
+            if (result == null) {
+              availableStreams.push({ ...stream, description: 'Source de secours · décodage non validé' });
+            }
+          }
+        }
         return send(200, { streams: availableStreams });
       }
       return send(404, { error: 'Ressource inconnue' });

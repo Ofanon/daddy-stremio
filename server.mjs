@@ -4,12 +4,13 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import { setTimeout as delay } from 'node:timers/promises';
 
 const base = 'https://thedaddy.li/';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
-const sampleFrames = 60;
-const brokenChannelTtlMs = 10 * 60 * 1000;
+const sampleFrames = 180;
+const verificationTtlMs = 6 * 60 * 60 * 1000;
 
 async function checkVideo(url, signal) {
   const { stdout, stderr } = await execFileAsync('ffmpeg', [
@@ -17,7 +18,7 @@ async function checkVideo(url, signal) {
     '-protocol_whitelist', 'http,https,tcp,tls,crypto',
     '-rw_timeout', '4000000', '-f', 'hls',
     '-allowed_extensions', 'ALL', '-extension_picky', '0',
-    '-threads', '1', '-i', url.href, '-map', '0:v:0', '-an', '-sn', '-dn',
+    '-err_detect', 'explode', '-threads', '1', '-i', url.href, '-map', '0:v:0', '-an', '-sn', '-dn',
     '-frames:v', String(sampleFrames), '-threads', '1', '-f', 'null', '-'
   ], { signal, maxBuffer: 128 * 1024, windowsHide: true });
   const frames = [...stdout.matchAll(/^frame=(\d+)/gm)].at(-1);
@@ -32,7 +33,7 @@ async function checkVideo(url, signal) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.8', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.9', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -78,15 +79,16 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
   servers = (process.env.RESOLVER_SERVERS || 'casting,player,cast,stream,watch').split(','),
   excludedChannelIds = process.env.EXCLUDED_CHANNEL_IDS ?? '950',
   allowUnverifiedStreams = process.env.ALLOW_UNVERIFIED_STREAMS === 'true',
+  scanCatalog = true,
   cacheMs = 300000 } = {}) {
   const excluded = new Set(excludedChannelIds.split(',').map(id => id.trim()).filter(Boolean)
     .map(id => `daddy:${id}`));
-  const hiddenUntil = new Map();
-  function isTemporarilyHidden(id) {
-    const expiry = hiddenUntil.get(id);
+  const verifiedUntil = new Map();
+  function isCatalogVerified(id) {
+    const expiry = verifiedUntil.get(id);
     if (expiry === undefined) return false;
     if (expiry > Date.now()) return true;
-    hiddenUntil.delete(id);
+    verifiedUntil.delete(id);
     return false;
   }
   if (resolverUrl && (!webUrl(resolverUrl) || !webUrl(resolverPublicUrl))) throw new Error('Adresse resolver invalide');
@@ -127,7 +129,27 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
     try { return JSON.parse(await readFile(path.join(directory, 'streams.json'), 'utf8')); }
     catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
   }
-  return http.createServer(async (req, res) => {
+  const inFlightChecks = new Map();
+  const scanner = new AbortController();
+  async function verifyChannel(id) {
+    if (!inFlightChecks.has(id)) {
+      const task = checkSources(id).finally(() => inFlightChecks.delete(id));
+      inFlightChecks.set(id, task);
+    }
+    return inFlightChecks.get(id);
+  }
+  async function scanChannels() {
+    while (!scanner.signal.aborted) {
+      const rows = await channels().catch(() => null);
+      for (const channel of rows ?? []) {
+        if (scanner.signal.aborted) return;
+        await verifyChannel(channel.id);
+        await delay(1500, undefined, { signal: scanner.signal });
+      }
+      await delay(rows ? 600000 : 30000, undefined, { signal: scanner.signal });
+    }
+  }
+  const app = http.createServer(async (req, res) => {
     const send = (status, body, type = 'application/json') => {
       res.writeHead(status, { 'Content-Type': `${type}; charset=utf-8`,
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -149,8 +171,9 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
         const search = (extra.get('search') || '').toLocaleLowerCase();
         const rawSkip = Number(extra.get('skip') || 0);
         const skip = Number.isSafeInteger(rawSkip) && rawSkip >= 0 ? rawSkip : 0;
-        const metas = (await channels())
-          .filter(c => !isTemporarilyHidden(c.id) && c.name.toLocaleLowerCase().includes(search))
+        const rows = await channels();
+        const metas = rows
+          .filter(c => (!resolverUrl || isCatalogVerified(c.id)) && c.name.toLocaleLowerCase().includes(search))
           .slice(skip, skip + 100);
         return send(200, { metas });
       }
@@ -162,57 +185,67 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
       if (parts[0] === 'stream') {
         if (!channel) return send(200, { streams: [] });
         if (!resolverUrl) return send(200, { streams: nativeStreams(await streams(), id.slice(6)) });
-        const signal = AbortSignal.timeout(8000);
-        const results = await Promise.allSettled(servers.map(async server => {
-          const query = new URLSearchParams({ channel: id.slice(6), server });
-          const route = `/api/live?${query}`;
-          const internalUrl = new URL(route, resolverUrl);
-          const playlist = await fetchImpl(internalUrl, { signal, redirect: 'error' });
-          if (!playlist.ok || !/mpegurl/i.test(playlist.headers.get('content-type') || '')) {
-            await playlist.body?.cancel();
-            throw new Error('Playlist HLS inaccessible');
-          }
-          const actualPlayer = playlist.headers.get('x-daddylive-player');
-          if (actualPlayer && actualPlayer !== server) {
-            await playlist.body?.cancel();
-            throw new Error('Le resolver a servi un autre lecteur');
-          }
-          const lines = (await playlist.text()).trimStart();
-          if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
-            throw new Error('Playlist HLS vide ou invalide');
-          }
-          let verified = null;
-          try {
-            verified = await probeVideo(internalUrl, signal);
-          } catch {
-            // Keep inconclusive checks distinct from confirmed decode errors.
-          }
-          const name = actualPlayer ? `DaddyLive · ${actualPlayer}` : `DaddyLive · ${server} (demandé)`;
-          return { verified, stream: { name,
-            url: new URL(route, resolverPublicUrl).href, behaviorHints: { notWebReady: true } } };
-        }));
-        const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
-        const verified = resolved.filter(source => source.verified === true);
-        if (verified.length) hiddenUntil.delete(id);
-        else if (!signal.aborted && resolved.length && resolved.every(source => source.verified === false)) {
-          hiddenUntil.set(id, Date.now() + brokenChannelTtlMs);
-        }
-        const availableStreams = verified.map(source => source.stream);
-        if (allowUnverifiedStreams && availableStreams.length === 0) {
-          for (const { verified: result, stream } of resolved) {
-            if (result == null) {
-              availableStreams.push({ ...stream, description: 'Source de secours · décodage non validé' });
-            }
-          }
-        }
-        return send(200, { streams: availableStreams });
+        return send(200, { streams: await verifyChannel(id) });
       }
       return send(404, { error: 'Ressource inconnue' });
     } catch {
-      // Never return upstream exception text: its URL may contain the API key.
       return send(503, { error: 'Le fournisseur ou le resolver est indisponible. Vérifiez la configuration.' });
     }
   });
+  if (resolverUrl && scanCatalog) {
+    app.once('listening', () => {
+      scanChannels().catch(error => {
+        if (!scanner.signal.aborted) console.error('Vérification du catalogue interrompue :', error.name);
+      });
+    });
+  }
+  app.once('close', () => scanner.abort());
+  return app;
+
+  async function checkSources(id) {
+    const signal = AbortSignal.any([AbortSignal.timeout(18000), scanner.signal]);
+    const results = await Promise.allSettled(servers.map(async server => {
+      const query = new URLSearchParams({ channel: id.slice(6), server });
+      const route = `/api/live?${query}`;
+      const internalUrl = new URL(route, resolverUrl);
+      const playlist = await fetchImpl(internalUrl, { signal, redirect: 'error' });
+      if (!playlist.ok || !/mpegurl/i.test(playlist.headers.get('content-type') || '')) {
+        await playlist.body?.cancel();
+        throw new Error('Playlist HLS inaccessible');
+      }
+      const actualPlayer = playlist.headers.get('x-daddylive-player');
+      if (actualPlayer && actualPlayer !== server) {
+        await playlist.body?.cancel();
+        throw new Error('Le resolver a servi un autre lecteur');
+      }
+      const lines = (await playlist.text()).trimStart();
+      if (!/^#EXTM3U\r?\n/.test(lines) || !/^#EXT(?:INF|\-X\-STREAM\-INF):/m.test(lines)) {
+        throw new Error('Playlist HLS vide ou invalide');
+      }
+      let verified = null;
+      try {
+        verified = await probeVideo(internalUrl, signal);
+      } catch {
+        // Keep inconclusive checks distinct from confirmed decode errors.
+      }
+      const name = actualPlayer ? `DaddyLive · ${actualPlayer}` : `DaddyLive · ${server} (demandé)`;
+      return { verified, stream: { name,
+        url: new URL(route, resolverPublicUrl).href, behaviorHints: { notWebReady: true } } };
+    }));
+    const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+    const verified = resolved.filter(source => source.verified === true);
+    if (verified.length) verifiedUntil.set(id, Date.now() + verificationTtlMs);
+    else verifiedUntil.delete(id);
+    const availableStreams = verified.map(source => source.stream);
+    if (allowUnverifiedStreams && availableStreams.length === 0) {
+      for (const { verified: result, stream } of resolved) {
+        if (result == null) {
+          availableStreams.push({ ...stream, description: 'Source de secours · décodage non validé' });
+        }
+      }
+    }
+    return availableStreams;
+  }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT || 7000);

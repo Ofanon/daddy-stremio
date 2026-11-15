@@ -41,6 +41,7 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   let probeMode = 'normal';
   const server = createAddon({ apiKey: '', resolverUrl: 'http://localhost:3000',
     allowUnverifiedStreams: false,
+    scanCatalog: false,
     resolverPublicUrl: 'https://video.example', servers: ['casting', 'cast', 'watch', 'player', 'stream'],
     probeVideo: async url => {
       assert.equal(url.origin, 'http://localhost:3000');
@@ -69,7 +70,7 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   t.after(() => new Promise(resolve => server.close(resolve)));
   const root = `http://127.0.0.1:${server.address().port}`;
   const catalog = await (await fetch(root + '/catalog/tv/daddy-channels.json')).json();
-  assert.deepEqual(catalog.metas.map(meta => meta.name), ['ESPN']);
+  assert.deepEqual(catalog.metas, []);
   const search = await (await fetch(root + '/catalog/tv/daddy-channels/search=France%202.json')).json();
   assert.deepEqual(search.metas, []);
   const hidden = await (await fetch(root + '/stream/tv/daddy:950.json')).json();
@@ -78,12 +79,13 @@ test('resolver mode skips unavailable playlists and sources that fail the video 
   assert.equal(response.streams.length, 1);
   assert.equal(response.streams[0].url, 'https://video.example/api/live?channel=44&server=player');
   assert.equal(response.streams[0].externalUrl, undefined);
+  const readCatalog = async () => (await (await fetch(root + '/catalog/tv/daddy-channels.json')).json()).metas;
+  assert.equal((await readCatalog()).length, 1);
   probeMode = 'unknown';
   const fallback = await (await fetch(root + '/stream/tv/daddy:44.json')).json();
   assert.deepEqual(fallback.streams, []);
   assert.deepEqual(probes.sort(), ['casting', 'casting', 'player', 'player']);
-  const readCatalog = async () => (await (await fetch(root + '/catalog/tv/daddy-channels.json')).json()).metas;
-  assert.equal((await readCatalog()).length, 1);
+  assert.deepEqual(await readCatalog(), []);
   probeMode = 'broken';
   const broken = await (await fetch(root + '/stream/tv/daddy:44.json')).json();
   assert.deepEqual(broken.streams, []);

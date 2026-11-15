@@ -1,4 +1,4 @@
-# DaddyLive pour Stremio — v0.2.10
+# DaddyLive pour Stremio — v0.2.11
 
 Addon utilisant l’interface HTTP de https://github.com/Lunatic16/daddylive-stream-resolver, avec catalogue, recherche, pagination et lecture HLS intégrée. Aucune clé API nécessaire dans ce mode.
 
@@ -50,7 +50,7 @@ Dans .env :
 - RESOLVER_URL : adresse depuis l’addon, http://127.0.0.1:3000 par défaut.
 - RESOLVER_PUBLIC_URL : adresse accessible au lecteur Stremio, identique sur ce PC.
 - RESOLVER_SERVERS : casting,player,cast,stream,watch. Plus est exclu car signalé indisponible.
-- EXCLUDED_CHANNEL_IDS : chaînes masquées dans le catalogue et la recherche, séparées par des virgules. France 2 (950) est exclue par défaut après des essais de lecture infructueux. Définir `EXCLUDED_CHANNEL_IDS=` dans `.env` pour réafficher toutes les chaînes.
+- EXCLUDED_CHANNEL_IDS : chaînes à exclure manuellement, séparées par des virgules. Vide par défaut. Si un ancien fichier `.env` contient `EXCLUDED_CHANNEL_IDS=950`, vider la valeur pour réafficher France 2.
 - PORT et HOST : 7000 et 127.0.0.1 par défaut.
 
 DLHD_BASE configure le domaine du fournisseur dans le resolver. start-resolver.ps1 utilise https://thedaddy.li sauf si cette variable est déjà définie.
@@ -61,10 +61,10 @@ L’ancien mode API reste disponible en supprimant les variables RESOLVER_URL et
 
 ## Fonctionnement
 Catalogue via /api/channels, cache de cinq minutes, pages de 100 chaînes. L’addon vérifie les playlists HLS via /api/live en parallèle. Le resolver renouvelle les liens temporaires.
-Dans Découvrir, le filtre de catégories permet de choisir un pays. Le pays est déduit du nom fourni par DaddyLive. Les noms sans indication reconnue restent dans « Autres ». Le contrôle vidéo commence par les chaînes françaises.
+Dans Découvrir, le filtre de catégories permet de choisir un pays. Le pays est déduit du nom fourni par DaddyLive. Les noms sans indication reconnue restent dans « Autres ».
 Le resolver fourni indique le lecteur réellement servi dans l’en-tête `X-DaddyLive-Player`. Une réponse qui annonce un lecteur différent est écartée. Avec un resolver externe qui ne fournit pas cet en-tête, l’addon indique seulement le lecteur demandé.
-En mode resolver, le catalogue et la recherche affichent uniquement les chaînes avec au moins une source validée. Un contrôle en arrière-plan démarre avec l’addon et traite une chaîne à la fois. Le catalogue démarre vide et se remplit progressivement. Les résultats restent en mémoire jusqu’au redémarrage et expirent après six heures.
-Chaque demande de sources relance le contrôle, sauf si un contrôle de la même chaîne est déjà en cours. FFmpeg tente de décoder 180 images en mode strict. Playlist et décodage partagent un délai de 18 secondes. Si aucune source ne passe, la chaîne est retirée du catalogue et pourra revenir après un contrôle réussi. L’option `ALLOW_UNVERIFIED_STREAMS=true` permet de retrouver des sources indéterminées depuis une fiche déjà ouverte, sans réafficher la chaîne au catalogue. Docker inclut FFmpeg.
+Le catalogue et la recherche affichent les chaînes dès le chargement de la liste du fournisseur. En mode resolver, le contrôle vidéo démarre quand Stremio demande les sources d’une chaîne. Les demandes simultanées pour la même chaîne partagent le contrôle en cours.
+FFmpeg tente de décoder 180 images en mode strict. Playlist et décodage partagent un délai de 18 secondes. Si aucune source ne passe, la liste des sources est vide par défaut et la chaîne reste affichée. L’option `ALLOW_UNVERIFIED_STREAMS=true` permet de proposer des sources dont le contrôle est indéterminé. Docker inclut FFmpeg.
 Ce test augmente le délai d’affichage des sources et consomme de la bande passante. Il porte sur un extrait et ne garantit pas la suite du flux ni sa compatibilité avec tous les lecteurs. Stremio conserve la source choisie pendant la lecture. Pour relancer le contrôle après un problème, rouvrir la liste des sources.
 Les chaînes identifiées comme adultes d’après leur nom sont exclues du catalogue, de la recherche et de la lecture. Le fournisseur ne fournit pas de classification d’âge fiable. Ce filtre ne remplace donc pas un contrôle parental.
 

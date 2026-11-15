@@ -4,13 +4,11 @@ import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { setTimeout as delay } from 'node:timers/promises';
 
 const base = 'https://thedaddy.li/';
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const execFileAsync = promisify(execFile);
 const sampleFrames = 180;
-const verificationTtlMs = 6 * 60 * 60 * 1000;
 const adultChannel = /(?:18\s*\+|\+\s*18|\b(?:adult(?:e|es|s)?|xxx|porn\w*|playboy|hustler|brazzers|babes tv|private tv|vixen|dorcel|redlight|penthouse|sct|venus adult)\b)/i;
 const countryRules = [
   ['Belgique', /\b(?:belg(?:ium|ique)|rtbf|tipik|la une)\b/i],
@@ -54,7 +52,7 @@ async function checkVideo(url, signal) {
 }
 
 export const manifest = {
-  id: 'org.oscar.daddy.live', version: '0.2.10', name: 'Daddy Live — Oscar',
+  id: 'org.oscar.daddy.live', version: '0.2.11', name: 'Daddy Live — Oscar',
   description: 'Chaînes DaddyLive et lecture intégrée via daddylive-stream-resolver.',
   types: ['tv'], resources: ['catalog', 'meta', 'stream'], idPrefixes: ['daddy:'],
   catalogs: [{ type: 'tv', id: 'daddy-channels', name: 'DaddyLive — Chaînes',
@@ -101,20 +99,11 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
   resolverUrl = process.env.RESOLVER_URL,
   resolverPublicUrl = process.env.RESOLVER_PUBLIC_URL || resolverUrl,
   servers = (process.env.RESOLVER_SERVERS || 'casting,player,cast,stream,watch').split(','),
-  excludedChannelIds = process.env.EXCLUDED_CHANNEL_IDS ?? '950',
+  excludedChannelIds = process.env.EXCLUDED_CHANNEL_IDS ?? '',
   allowUnverifiedStreams = process.env.ALLOW_UNVERIFIED_STREAMS === 'true',
-  scanCatalog = true,
   cacheMs = 300000 } = {}) {
   const excluded = new Set(excludedChannelIds.split(',').map(id => id.trim()).filter(Boolean)
     .map(id => `daddy:${id}`));
-  const verifiedUntil = new Map();
-  function isCatalogVerified(id) {
-    const expiry = verifiedUntil.get(id);
-    if (expiry === undefined) return false;
-    if (expiry > Date.now()) return true;
-    verifiedUntil.delete(id);
-    return false;
-  }
   if (resolverUrl && (!webUrl(resolverUrl) || !webUrl(resolverPublicUrl))) throw new Error('Adresse resolver invalide');
   const allowedServers = new Set(['stream', 'cast', 'watch', 'casting', 'player']);
   servers = [...new Set(servers.map(s => s.trim()).filter(s => allowedServers.has(s)))];
@@ -154,7 +143,6 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
     catch (error) { if (error.code === 'ENOENT') return {}; throw error; }
   }
   const inFlightChecks = new Map();
-  const scanner = new AbortController();
   async function verifyChannel(id) {
     if (!inFlightChecks.has(id)) {
       const task = checkSources(id).finally(() => inFlightChecks.delete(id));
@@ -162,19 +150,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
     }
     return inFlightChecks.get(id);
   }
-  async function scanChannels() {
-    while (!scanner.signal.aborted) {
-      const rows = await channels().catch(() => null);
-      const scanOrder = [...(rows ?? [])].sort((a, b) => Number(b.genres[0] === 'France') - Number(a.genres[0] === 'France'));
-      for (const channel of scanOrder) {
-        if (scanner.signal.aborted) return;
-        await verifyChannel(channel.id);
-        await delay(1500, undefined, { signal: scanner.signal });
-      }
-      await delay(rows ? 600000 : 30000, undefined, { signal: scanner.signal });
-    }
-  }
-  const app = http.createServer(async (req, res) => {
+  return http.createServer(async (req, res) => {
     const send = (status, body, type = 'application/json') => {
       res.writeHead(status, { 'Content-Type': `${type}; charset=utf-8`,
         'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -199,7 +175,7 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
         const skip = Number.isSafeInteger(rawSkip) && rawSkip >= 0 ? rawSkip : 0;
         const rows = await channels();
         const metas = rows
-          .filter(c => (!resolverUrl || isCatalogVerified(c.id)) && c.name.toLocaleLowerCase().includes(search))
+          .filter(c => c.name.toLocaleLowerCase().includes(search))
           .filter(c => !country || c.genres.includes(country))
           .slice(skip, skip + 100);
         return send(200, { metas });
@@ -219,18 +195,9 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
       return send(503, { error: 'Le fournisseur ou le resolver est indisponible. Vérifiez la configuration.' });
     }
   });
-  if (resolverUrl && scanCatalog) {
-    app.once('listening', () => {
-      scanChannels().catch(error => {
-        if (!scanner.signal.aborted) console.error('Vérification du catalogue interrompue :', error.name);
-      });
-    });
-  }
-  app.once('close', () => scanner.abort());
-  return app;
 
   async function checkSources(id) {
-    const signal = AbortSignal.any([AbortSignal.timeout(18000), scanner.signal]);
+    const signal = AbortSignal.timeout(18000);
     const results = await Promise.allSettled(servers.map(async server => {
       const query = new URLSearchParams({ channel: id.slice(6), server });
       const route = `/api/live?${query}`;
@@ -261,8 +228,6 @@ export function createAddon({ apiKey = process.env.DADDY_API_KEY, fetchImpl = fe
     }));
     const resolved = results.filter(r => r.status === 'fulfilled').map(r => r.value);
     const verified = resolved.filter(source => source.verified === true);
-    if (verified.length) verifiedUntil.set(id, Date.now() + verificationTtlMs);
-    else verifiedUntil.delete(id);
     const availableStreams = verified.map(source => source.stream);
     if (allowUnverifiedStreams && availableStreams.length === 0) {
       for (const { verified: result, stream } of resolved) {
